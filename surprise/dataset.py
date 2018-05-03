@@ -30,7 +30,6 @@ from __future__ import (absolute_import, division, print_function,
 from collections import defaultdict
 import sys
 import os
-import itertools
 import random
 import warnings
 
@@ -118,8 +117,13 @@ class Dataset:
             reader(:obj:`Reader <surprise.reader.Reader>`): A reader to read
                 the file.
         """
+        if file_path is None:
+            raise ValueError('You must specify the path to file with data.')
+        if reader is None:
+            raise ValueError('You must specify reader.')
 
-        return DatasetAutoFolds(ratings_file=file_path, reader=reader)
+        raw_ratings = reader.read_ratings(file_path)
+        return DatasetAutoFolds(raw_ratings=raw_ratings, reader=reader)
 
     @classmethod
     def load_from_folds(cls, folds_files, reader):
@@ -143,7 +147,6 @@ class Dataset:
                 the files.
 
         """
-
         return DatasetUserFolds(folds_files=folds_files, reader=reader)
 
     @classmethod
@@ -162,17 +165,32 @@ class Dataset:
                 the file. Only the ``rating_scale`` field needs to be
                 specified.
         """
+        if df is None:
+            raise ValueError('You must specify dataframe.')
+        if reader is None:
+            raise ValueError('You must specify reader.')
 
-        return DatasetAutoFolds(reader=reader, df=df)
+        raw_ratings = [(uid, iid, float(r) + reader.offset, None)
+                       for (uid, iid, r) in
+                       df.itertuples(index=False)]
+        return DatasetAutoFolds(raw_ratings=raw_ratings, reader=reader)
 
-    def read_ratings(self, file_name):
-        """Return a list of ratings (user, item, rating, timestamp) read from
-        file_name"""
+    @classmethod
+    def from_tuples(cls, tuples, reader):
+        """Builds Dataset (without folds) from given list of ratings.
 
-        with open(os.path.expanduser(file_name)) as f:
-            raw_ratings = [self.reader.parse_line(line) for line in
-                           itertools.islice(f, self.reader.skip_lines, None)]
-        return raw_ratings
+        Args:
+            tuples: raw data tuples like (user, item, rating, timestamp).
+            reader(:obj:`Reader <surprise.reader.Reader>`): A reader to read
+                the file. Only the ``rating_scale`` field needs to be
+                specified.
+        """
+        if tuples is None:
+            raise ValueError('You must specify tuples.')
+        if reader is None:
+            raise ValueError('You must specify reader.')
+
+        return DatasetAutoFolds(raw_ratings=tuples, reader=reader)
 
     def folds(self):
         """
@@ -265,8 +283,8 @@ class DatasetUserFolds(Dataset):
 
     def raw_folds(self):
         for train_file, test_file in self.folds_files:
-            raw_train_ratings = self.read_ratings(train_file)
-            raw_test_ratings = self.read_ratings(test_file)
+            raw_train_ratings = self.reader.read_ratings(train_file)
+            raw_test_ratings = self.reader.read_ratings(test_file)
             yield raw_train_ratings, raw_test_ratings
 
 
@@ -275,21 +293,13 @@ class DatasetAutoFolds(Dataset):
     cross-validation) are not predefined. (Or for when there are no folds at
     all)."""
 
-    def __init__(self, ratings_file=None, reader=None, df=None):
-
+    def __init__(self, raw_ratings, reader=None):
+        """FOR PRIVATE USE ONLY.
+        If you want to create :class:`DatasetAutoFolds` from raw data,
+        please, use :meth:`split <Dataset.from_tuples>` method."""
         Dataset.__init__(self, reader)
         self.has_been_split = False  # flag indicating if split() was called.
-
-        if ratings_file is not None:
-            self.ratings_file = ratings_file
-            self.raw_ratings = self.read_ratings(self.ratings_file)
-        elif df is not None:
-            self.df = df
-            self.raw_ratings = [(uid, iid, float(r) + self.reader.offset, None)
-                                for (uid, iid, r) in
-                                self.df.itertuples(index=False)]
-        else:
-            raise ValueError('Must specify ratings file or dataframe.')
+        self.raw_ratings = raw_ratings
 
     def build_full_trainset(self):
         """Do not split the dataset into folds and just return a trainset as
